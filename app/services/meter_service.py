@@ -294,13 +294,32 @@ def build_hierarchy_tree(dts: List[Dict[str, Any]]) -> HierarchyResponse:
     """
     Reconstructs electrical grid hierarchy from Distribution Transformer records.
     Groups Distribution Transformers under their respective Feeders.
+    Guarantees acyclic graph, deduplicates DT codes, and handles missing fields.
     """
+    if not dts:
+        return HierarchyResponse(
+            is_partial=False,
+            summary="Distribution Transformer topology mapped to Feeders",
+            total_distribution_transformers=0,
+            nodes=[],
+        )
+
     feeders: Dict[str, List[HierarchyNode]] = {}
+    seen_dt_codes = set()
+    valid_dt_count = 0
 
     for dt in dts:
-        dt_code = str(dt.get("code", "")).strip()
-        dt_name = str(dt.get("name", dt_code)).strip()
-        feeder_code = str(dt.get("feederCode", "UNKNOWN_FEEDER")).strip()
+        if not isinstance(dt, dict):
+            continue
+        dt_code = str(dt.get("code") or "").strip()
+        if not dt_code or dt_code in seen_dt_codes:
+            # Skip invalid or duplicate DT nodes
+            continue
+        seen_dt_codes.add(dt_code)
+        valid_dt_count += 1
+
+        dt_name = str(dt.get("name") or dt_code).strip()
+        feeder_code = str(dt.get("feederCode") or "UNKNOWN_FEEDER").strip()
         capacity = dt.get("capacityKva")
 
         dt_node = HierarchyNode(
@@ -316,9 +335,10 @@ def build_hierarchy_tree(dts: List[Dict[str, Any]]) -> HierarchyResponse:
 
     root_nodes: List[HierarchyNode] = []
     for feeder_code, child_dts in sorted(feeders.items()):
+        child_dts.sort(key=lambda x: x.id)
         feeder_node = HierarchyNode(
             id=feeder_code,
-            name=f"Feeder {feeder_code}",
+            name=f"Feeder {feeder_code}" if feeder_code != "UNKNOWN_FEEDER" else "Unassigned Feeder",
             type="feeder",
             parent_id=None,
             children=child_dts,
@@ -329,6 +349,6 @@ def build_hierarchy_tree(dts: List[Dict[str, Any]]) -> HierarchyResponse:
     return HierarchyResponse(
         is_partial=False,
         summary="Distribution Transformer topology mapped to Feeders",
-        total_distribution_transformers=len(dts),
+        total_distribution_transformers=valid_dt_count,
         nodes=root_nodes,
     )

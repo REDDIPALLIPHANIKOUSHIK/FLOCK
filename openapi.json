@@ -34,7 +34,7 @@
           "Authentication"
         ],
         "summary": "Establish or test upstream portal session",
-        "description": "Authenticates against the legacy Urja Meter Ops portal using configured or provided credentials and stores the session cookie.",
+        "description": "Authenticates against the legacy Urja Meter Ops portal using configured server credentials and maintains the upstream session cookie. Custom credential overrides are restricted to development mode.",
         "operationId": "login_api_v1_auth_login_post",
         "requestBody": {
           "content": {
@@ -67,7 +67,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     },
     "/api/v1/meters": {
@@ -76,8 +81,13 @@
           "Meters"
         ],
         "summary": "List smart meters",
-        "description": "Retrieve a normalized collection of meters from the legacy portal. Supports search queries and pagination.",
+        "description": "Retrieve a normalized collection of meters from the legacy portal. Supports search queries and exact limit/offset pagination across upstream 20-item page boundaries.",
         "operationId": "list_meters_api_v1_meters_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "q",
@@ -158,6 +168,11 @@
         "summary": "Get meter details",
         "description": "Fetch single normalized meter details including nameplate attributes, electrical hierarchy, and geographic coordinates.",
         "operationId": "get_meter_api_v1_meters__meter_id__get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "meter_id",
@@ -201,6 +216,11 @@
         "summary": "Get meter consumption telemetry",
         "description": "Retrieve 30-minute interval readings for cumulative active/apparent energy and voltage, with date range filters.",
         "operationId": "get_meter_consumption_api_v1_meters__meter_id__consumption_get",
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ],
         "parameters": [
           {
             "name": "meter_id",
@@ -299,7 +319,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     }
   },
@@ -1052,6 +1077,13 @@
           "type"
         ],
         "title": "ValidationError"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
       }
     }
   },

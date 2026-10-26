@@ -4,12 +4,17 @@ from contextlib import asynccontextmanager
 import logging
 import uuid
 from typing import AsyncGenerator
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.dependencies import close_portal_client, get_portal_client, init_portal_client
+from app.dependencies import (
+    close_portal_client,
+    get_portal_client,
+    init_portal_client,
+    verify_api_key,
+)
 from app.exceptions import PortalError
 from app.models import HealthResponse
 from app.routes.auth import router as auth_router
@@ -55,12 +60,15 @@ app = FastAPI(
     ]
 )
 
-# Enable permissive CORS for integration environments
+# Restrict wildcard CORS with credentials
+origins = settings.allowed_origins
+allow_credentials = False if "*" in origins else True
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=origins,
+    allow_credentials=allow_credentials,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -149,7 +157,8 @@ async def health() -> HealthResponse:
     )
 
 
-# Register modular routers under configured API prefix
-app.include_router(auth_router, prefix=settings.api_prefix)
-app.include_router(meters_router, prefix=settings.api_prefix)
-app.include_router(hierarchy_router, prefix=settings.api_prefix)
+# Register modular routers under configured API prefix with optional API key protection
+api_dependencies = [Depends(verify_api_key)]
+app.include_router(auth_router, prefix=settings.api_prefix, dependencies=api_dependencies)
+app.include_router(meters_router, prefix=settings.api_prefix, dependencies=api_dependencies)
+app.include_router(hierarchy_router, prefix=settings.api_prefix, dependencies=api_dependencies)

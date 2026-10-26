@@ -39,3 +39,23 @@ def test_build_hierarchy_tree_edge_cases():
     assert "UNKNOWN_FEEDER" in nodes
     assert "F-999" in nodes
     assert nodes["F-999"].children[0].metadata["capacity_kva"] == 500
+
+
+def test_build_hierarchy_deduplicates_and_handles_empty():
+    """Verify hierarchy deduplicates duplicate DT entries and handles empty lists."""
+    # Empty collection
+    assert build_hierarchy_tree([]).total_distribution_transformers == 0
+    assert build_hierarchy_tree([]).nodes == []
+
+    # Duplicates and blanks
+    raw = [
+        {"code": "DT-001", "name": "DT 1", "feederCode": "F-1"},
+        {"code": "DT-001", "name": "Duplicate DT 1", "feederCode": "F-1"},
+        {"code": "", "name": "Blank Code", "feederCode": "F-1"},
+        {"code": "DT-002", "name": "DT 2", "feederCode": "F-1"},
+    ]
+    tree = build_hierarchy_tree(raw)
+    assert tree.total_distribution_transformers == 2
+    feeder_node = tree.nodes[0]
+    assert len(feeder_node.children) == 2
+    assert [c.id for c in feeder_node.children] == ["DT-001", "DT-002"]

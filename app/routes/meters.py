@@ -1,11 +1,20 @@
 """Meter collection, meter details, and consumption history endpoints."""
 
+import logging
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.client import UrjaPortalClient
 from app.dependencies import get_portal_client
-from app.exceptions import PortalNotFoundError
+from app.exceptions import (
+    PortalNotFoundError,
+    PortalParseError,
+    PortalRateLimitError,
+    PortalSessionExpiredError,
+    PortalTimeoutError,
+    PortalUpstreamError,
+)
 from app.models import (
     ConsumptionResponse,
     MeterDetail,
@@ -18,14 +27,28 @@ from app.services.meter_service import (
     normalize_meter_summary,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/meters", tags=["Meters"])
+
+METER_ID_REGEX = re.compile(r"^[A-Za-z0-9_\-\.]{1,64}$")
+
+
+def validate_meter_id(meter_id: str) -> str:
+    """Validate meter identifier format preventing path traversal or malformed paths."""
+    clean_id = meter_id.strip()
+    if not clean_id or not METER_ID_REGEX.match(clean_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid meter ID format. Identifier must be alphanumeric (1-64 chars) with optional dashes or dots."
+        )
+    return clean_id
 
 
 @router.get(
     "",
     response_model=MeterListResponse,
     summary="List smart meters",
-    description="Retrieve a normalized collection of meters from the legacy portal. Supports search queries and pagination."
+    description="Retrieve a normalized collection of meters from the legacy portal. Supports search queries and exact limit/offset pagination across upstream 20-item page boundaries."
 )
 async def list_meters(
     q: Optional[str] = Query(default="", description="Filter by meter ID, serial number, or make"),
@@ -33,27 +56,73 @@ async def list_meters(
     offset: int = Query(default=0, ge=0, description="Offset index for pagination"),
     client: UrjaPortalClient = Depends(get_portal_client),
 ) -> MeterListResponse:
-    """Retrieve normalized meters list from upstream portal."""
-    # Extract raw values if called directly in tests/scripts
+    """Retrieve normalized meters list from upstream portal with exact slice pagination."""
     offset_val = offset if isinstance(offset, int) else 0
     limit_val = limit if isinstance(limit, int) else 20
     query_str = q if isinstance(q, str) else ""
 
-    # Upstream portal paginates by page index (20 items/page)
-    page = (offset_val // 20) + 1
-    raw = await client.search_meters(query=query_str, page=page)
+    if limit_val <= 0:
+        return MeterListResponse(
+            data=[],
+            pagination=PaginationMeta(limit=limit_val, offset=offset_val, total=0, has_more=False)
+        )
 
-    data_items = raw.get("data", [])
-    total = raw.get("total")
+    page_size = 20
+    first_page = (offset_val // page_size) + 1
 
-    normalized = [normalize_meter_summary(item) for item in data_items]
+    # Fetch initial page
+    raw_first = await client.search_meters(query=query_str, page=first_page)
+    total = raw_first.get("total")
+    first_items = raw_first.get("data", [])
 
-    # Calculate whether more items exist
+    # If collection is empty or offset is beyond total, return immediately
+    if total == 0 or not first_items or (total is not None and offset_val >= total):
+        return MeterListResponse(
+            data=[],
+            pagination=PaginationMeta(
+                limit=limit_val,
+                offset=offset_val,
+                total=total if total is not None else 0,
+                has_more=False,
+            ),
+        )
+
+    all_raw = list(first_items)
+    buffer_start_offset = (first_page - 1) * page_size
+    needed_in_buffer = (offset_val - buffer_start_offset) + limit_val
+
+    # If the first page returned fewer than page_size, no subsequent pages exist
+    if len(first_items) >= page_size:
+        current_page = first_page + 1
+        max_pages_to_fetch = 10  # Protection against infinite loops
+        pages_fetched = 1
+
+        while len(all_raw) < needed_in_buffer and pages_fetched < max_pages_to_fetch:
+            if total is not None and (buffer_start_offset + len(all_raw)) >= total:
+                break
+            next_raw = await client.search_meters(query=query_str, page=current_page)
+            next_items = next_raw.get("data", [])
+            if not next_items:
+                break
+            all_raw.extend(next_items)
+            current_page += 1
+            pages_fetched += 1
+            if len(next_items) < page_size:
+                break
+
+    # Extract exact requested slice from buffer
+    start_in_buffer = offset_val - buffer_start_offset
+    end_in_buffer = start_in_buffer + limit_val
+    sliced_items = all_raw[start_in_buffer:end_in_buffer]
+
+    normalized = [normalize_meter_summary(item) for item in sliced_items]
+
+    # Calculate whether more items exist beyond this slice
     has_more = False
     if total is not None:
         has_more = (offset_val + len(normalized)) < total
     else:
-        has_more = len(normalized) == 20
+        has_more = len(normalized) == limit_val
 
     return MeterListResponse(
         data=normalized,
@@ -77,26 +146,39 @@ async def get_meter(
     client: UrjaPortalClient = Depends(get_portal_client),
 ) -> MeterDetail:
     """Fetch single meter by identifier with normalized nameplate and hierarchy."""
-    clean_id = meter_id.strip()
-    if not clean_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Meter ID cannot be blank.")
+    clean_id = validate_meter_id(meter_id)
 
     # 1. Fetch SvelteKit deval data
     deval_data = None
     html_fallback = None
+
     try:
         deval_data = await client.get_meter_deval_data(clean_id)
     except PortalNotFoundError:
+        # Strict 404 semantics: do not catch or mask
         raise
-    except Exception:
-        # Fallback to HTML if deval fails
+    except PortalParseError:
+        # Deval parsing failed: fall back to server-rendered HTML
+        logger.warning("Deval parsing failed for meter %s, attempting HTML fallback", clean_id)
         try:
             html_fallback = await client.get_meter_html(clean_id)
-        except Exception:
-            pass
+        except PortalNotFoundError:
+            raise
+        except Exception as exc:
+            raise PortalParseError(f"Both devalue and HTML parsing failed for meter {clean_id}: {exc}") from exc
+    except (PortalTimeoutError, PortalUpstreamError, PortalSessionExpiredError, PortalRateLimitError):
+        # Propagate service unavailability errors (502, 504, 429) without masking as successful blank meters
+        raise
 
-    # 2. Fetch Geo coordinates concurrently or sequentially
-    geo_data = await client.get_meter_geo(clean_id)
+    # 2. Fetch Geo coordinates
+    geo_data = None
+    try:
+        geo_data = await client.get_meter_geo(clean_id)
+    except (PortalTimeoutError, PortalRateLimitError, PortalUpstreamError):
+        raise
+    except Exception as exc:
+        logger.warning("Could not retrieve geo coordinates for meter %s: %s", clean_id, exc)
+        geo_data = {}
 
     return normalize_meter_detail(
         meter_id=clean_id,
@@ -131,9 +213,7 @@ async def get_meter_consumption(
     client: UrjaPortalClient = Depends(get_portal_client),
 ) -> ConsumptionResponse:
     """Retrieve interval consumption history for the specified meter."""
-    clean_id = meter_id.strip()
-    if not clean_id:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Meter ID cannot be blank.")
+    clean_id = validate_meter_id(meter_id)
 
     if from_date and to_date and from_date > to_date:
         raise HTTPException(

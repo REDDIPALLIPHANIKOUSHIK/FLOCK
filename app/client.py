@@ -35,6 +35,7 @@ class UrjaPortalClient:
         self._client: Optional[httpx.AsyncClient] = None
         self._lock = asyncio.Lock()
         self._is_authenticated = False
+        self._session_version = 0
 
     async def start(self) -> None:
         """Initialize the persistent HTTP connection pool."""
@@ -151,8 +152,12 @@ class UrjaPortalClient:
     ) -> httpx.Response:
         """
         Execute an HTTP request against upstream portal with session recovery.
-        Detects session expiry, redirects to login, and re-authenticates once.
+        Enforces read-only operations on data routes and prevents duplicate re-authentications.
         """
+        # Strict enforcement: only GET requests are permitted except for login handshake
+        if method.upper() != "GET" and not path.startswith("/login"):
+            raise PortalUpstreamError(f"State-changing HTTP {method} requests are strictly prohibited on portal routes.")
+
         if self._client is None or self._client.is_closed:
             await self.start()
 
@@ -160,6 +165,7 @@ class UrjaPortalClient:
         if not self.is_authenticated and not path.startswith("/login"):
             await self.ensure_authenticated()
 
+        curr_session_version = self._session_version
         req_headers = headers or {}
         try:
             assert self._client is not None
@@ -194,12 +200,18 @@ class UrjaPortalClient:
                     is_expired = True
 
         if is_expired:
-            self._is_authenticated = False
             if not is_retry:
-                logger.warning("Upstream session expired while accessing %s. Re-authenticating and retrying...", path)
+                logger.warning("Upstream session expired while accessing %s. Re-authenticating...", path)
                 async with self._lock:
-                    await self.authenticate()
+                    # Double-check if another concurrent request already refreshed the session
+                    if self._session_version == curr_session_version:
+                        self._is_authenticated = False
+                        await self.authenticate()
+                        self._session_version += 1
+                    else:
+                        logger.debug("Session was already refreshed by another concurrent request; retrying immediately.")
                 return await self._request(method, path, params=params, headers=headers, is_retry=True)
+            self._is_authenticated = False
             raise PortalSessionExpiredError("Upstream portal session expired and re-authentication failed.")
 
         # Map HTTP errors
@@ -244,7 +256,7 @@ class UrjaPortalClient:
                         raise PortalNotFoundError(f"Meter {meter_id} not found.")
                     raise PortalUpstreamError(node.get("error", {}).get("message", "Upstream meter error"))
             return data
-        except PortalNotFoundError:
+        except (PortalNotFoundError, PortalUpstreamError, PortalTimeoutError, PortalRateLimitError):
             raise
         except Exception as exc:
             raise PortalParseError(f"Failed to parse deval data for meter {meter_id}: {exc}") from exc
@@ -257,15 +269,18 @@ class UrjaPortalClient:
     async def get_meter_geo(self, meter_id: str) -> Dict[str, Any]:
         """
         Call upstream /portal/meters/{meter_id}/geo.
-        Returns: {"data": {"latitude": "...", "longitude": "..."}}
+        Returns: {"latitude": "...", "longitude": "..."}
         """
         try:
             response = await self._request("GET", f"/portal/meters/{meter_id}/geo")
-            return response.json().get("data", {})
+            data = response.json()
+            return data.get("data", {})
         except PortalNotFoundError:
             return {}
-        except Exception:
-            return {}
+        except (PortalTimeoutError, PortalRateLimitError, PortalUpstreamError):
+            raise
+        except Exception as exc:
+            raise PortalParseError(f"Failed to parse geo response for meter {meter_id}: {exc}") from exc
 
     async def get_meter_energy(
         self,

@@ -358,9 +358,12 @@ Output:
 ```text
 tests/test_auth.py::test_successful_login PASSED
 tests/test_auth.py::test_invalid_credentials PASSED
-tests/test_auth.py::test_expired_session_reauthenticates_automatically PASSED
+tests/test_expired_session_reauthenticates_automatically PASSED
+tests/test_auth.py::test_concurrent_requests_on_expired_session_single_login PASSED
 tests/test_auth.py::test_prevent_infinite_retry_loop_on_persistent_auth_failure PASSED
 tests/test_auth.py::test_auth_login_api_endpoint PASSED
+tests/test_auth.py::test_auth_login_custom_credentials_forbidden_in_production PASSED
+tests/test_auth.py::test_api_key_enforcement PASSED
 tests/test_consumption.py::test_get_consumption PASSED
 tests/test_consumption.py::test_consumption_date_filtering PASSED
 tests/test_consumption.py::test_consumption_invalid_date_order PASSED
@@ -370,17 +373,27 @@ tests/test_health.py::test_openapi_schema PASSED
 tests/test_health.py::test_swagger_ui_available PASSED
 tests/test_hierarchy.py::test_get_hierarchy PASSED
 tests/test_hierarchy.py::test_build_hierarchy_tree_edge_cases PASSED
+tests/test_hierarchy.py::test_build_hierarchy_deduplicates_and_handles_empty PASSED
 tests/test_meters.py::test_list_meters PASSED
+tests/test_meters.py::test_pagination_exact_slice_limit_2_offset_1 PASSED
+tests/test_meters.py::test_pagination_across_page_boundary PASSED
+tests/test_meters.py::test_pagination_empty_results PASSED
+tests/test_meters.py::test_pagination_offset_past_total PASSED
+tests/test_meters.py::test_pagination_final_page PASSED
 tests/test_meters.py::test_get_meter_legacy_build PASSED
 tests/test_meters.py::test_get_meter_v2_classdata_build PASSED
 tests/test_meters.py::test_get_meter_not_found PASSED
+tests/test_meters.py::test_get_meter_invalid_id_format PASSED
+tests/test_meters.py::test_get_meter_does_not_swallow_upstream_error PASSED
 tests/test_meters.py::test_html_parsing_fallback PASSED
 tests/test_reliability.py::test_upstream_timeout PASSED
 tests/test_reliability.py::test_upstream_rate_limiting PASSED
 tests/test_reliability.py::test_upstream_500_error PASSED
+tests/test_reliability.py::test_read_only_enforcement PASSED
 tests/test_reliability.py::test_secret_redaction_in_error_responses PASSED
+tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED
 
-============================= 23 passed in 5.64s ==============================
+============================= 36 passed in 9.26s ==============================
 ```
 
 ---
@@ -389,17 +402,25 @@ tests/test_reliability.py::test_secret_redaction_in_error_responses PASSED
 
 1. **CSRF Enforcement**: SvelteKit strictly validates the `Origin` header for form submissions. The adapter sets `Origin: https://urja-ops.flockenergy.tech` to ensure compliant handshakes.
 2. **Session Cookie Persistence**: Outbound requests carry `__Secure-better-auth.session_token` inside the client cookie jar.
-3. **Transparent Recovery**: If the upstream session expires (HTTP 401, login page redirect, or SvelteKit redirect payload), the adapter intercepts the response, re-authenticates under an asynchronous lock, and retries the read operation once.
+3. **Concurrent Session Recovery & Versioning**: If the upstream session expires (HTTP 401, login page redirect, or SvelteKit redirect payload), the adapter intercepts the response. Under an asynchronous lock, the client inspects a monotonic session version: if another coroutine already refreshed the session, subsequent concurrent requests immediately retry using the refreshed token without issuing redundant logins.
 4. **Loop Protection**: Automatic retry is strictly limited to 1 attempt to prevent infinite authentication loops.
 
 ---
 
 ## Error Handling & Security
 
+- **Exact Slice Pagination**: The upstream portal only serves fixed 20-item pages (`page=1, 2, ...`). The wrapper dynamically fetches across page boundaries, accumulates items into a buffer, slices exactly `[offset : offset + limit]`, and returns accurate pagination metadata (`total`, `limit`, `offset`, `has_more`). Bounded fetching prevents runaway loops.
+- **API Key Protection**: Configurable API key protection via `X-API-Key` header (`API_KEY` in environment). When unconfigured, it permits convenient zero-config local development; when set in staging or production, all `/api/v1` routes require valid authorization.
+- **CORS Hardening**: Strict validation ensures `allow_credentials=True` is never combined with wildcard origins (`["*"]`). Specific origins must be declared when cookie/credential forwarding is enabled.
+- **Login Endpoint Safeguards**: The public `/api/v1/auth/login` endpoint rejects caller-supplied credentials in production (`APP_ENV != development`) to prevent credential stuffing or unauthorized proxy authentication.
+- **Read-Only Enforcement**: Outbound portal interactions are restricted to read-only `GET` requests; any attempt to trigger state-altering methods throws `PortalUpstreamError`.
+- **Meter Identifier Sanitization**: Meter IDs are strictly validated with `^[A-Za-z0-9_\-\.]{1,64}$` before path interpolation, blocking path traversal or injection.
 - **Status Code Mapping**:
   - `200`: Successful data retrieval.
   - `400`: Parameter validation errors (e.g. invalid date ranges or empty identifiers).
-  - `404`: Meter or resource not found.
+  - `401`: Missing or invalid `X-API-Key`.
+  - `403`: Forbidden operations (such as custom credentials in production).
+  - `404`: Meter or resource not found (strictly preserved, never masked by fallback errors).
   - `429`: Upstream rate limit with `Retry-After` header passthrough.
   - `502`: Bad Gateway / Upstream communication or parse error.
   - `504`: Gateway Timeout on upstream response delays.

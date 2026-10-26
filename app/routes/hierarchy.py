@@ -21,7 +21,8 @@ async def get_hierarchy(
     """Reconstruct grid hierarchy from upstream Distribution Transformers."""
     all_dts = []
     page = 1
-    while True:
+    max_pages = 20  # Protect against unexpected unbounded pagination
+    while page <= max_pages:
         resp = await client.get_distribution_transformers(page=page)
         items = resp.get("data", [])
         if not items:

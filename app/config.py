@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     # Local Fixture / Mock Mode for testing without live portal access
     mock_mode: bool = False
 
-    # Optional API key for public API protection if enabled
+    # Security settings
+    allowed_origins: list[str] = ["*"]
     api_key: Optional[str] = None
 
     model_config = SettingsConfigDict(

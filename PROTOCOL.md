@@ -93,7 +93,11 @@
     "total": 403
   }
   ```
-- **Pagination**: Default page size is 20 items per page. Total count observed is 403 meters.
+- **Pagination Details**:
+  - The upstream portal strictly paginates in fixed-size chunks of 20 items per page (`page=1` maps to items 0..19, `page=2` to 20..39, etc.).
+  - Total count observed: 403 meters.
+  - Upstream does not support arbitrary `limit` or `offset` query parameters directly on this endpoint.
+  - **Adapter Handling**: The API adapter maps arbitrary client `offset` and `limit` to the underlying 20-item pages, fetching multiple pages when requested slices cross page boundaries (e.g. `limit=2, offset=1` or `limit=3, offset=19`) while caching within request memory and respecting `total`.
 
 ---
 

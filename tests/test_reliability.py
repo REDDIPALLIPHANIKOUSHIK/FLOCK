@@ -1,4 +1,4 @@
-"""Tests for reliability, upstream errors, timeouts, rate limits, and security."""
+"""Tests for reliability, upstream errors, timeouts, rate limits, read-only guards, and security."""
 
 import pytest
 import httpx
@@ -51,6 +51,14 @@ async def test_upstream_500_error(portal_client: UrjaPortalClient, mock_portal: 
 
 
 @pytest.mark.asyncio
+async def test_read_only_enforcement(portal_client: UrjaPortalClient):
+    """Verify non-GET requests to portal data routes are strictly blocked."""
+    with pytest.raises(PortalUpstreamError) as exc_info:
+        await portal_client._request("POST", "/portal/meters/update")
+    assert "strictly prohibited" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_secret_redaction_in_error_responses(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
     """Verify error responses never leak passwords or session tokens."""
     mock_portal.get("/portal/meters/search").mock(
@@ -64,3 +72,15 @@ async def test_secret_redaction_in_error_responses(app_client: httpx.AsyncClient
     error_text = str(data)
     assert "urja-ops-2026" not in error_text
     assert "session_token" not in error_text
+
+
+@pytest.mark.asyncio
+async def test_cors_wildcard_credentials_prohibited(app_client: httpx.AsyncClient):
+    """Verify wildcard CORS does not allow credentials, preventing browser security errors."""
+    response = await app_client.options(
+        "/api/v1/meters",
+        headers={"Origin": "https://random-site.com", "Access-Control-Request-Method": "GET"}
+    )
+    # When allow_origins is "*", access-control-allow-credentials must not be "true"
+    allow_credentials = response.headers.get("access-control-allow-credentials")
+    assert allow_credentials != "true"
