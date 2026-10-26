@@ -245,3 +245,56 @@ def test_html_parsing_fallback():
     assert attrs["Installation Status"] == "Decommissioned"
     assert attrs["Installation Type"] == "Whole Current"
     assert len(parsed["hierarchy_items"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_pagination_exact_slice_limit_20_offset_0(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
+    """Verify GET /api/v1/meters?limit=20&offset=0 returns exactly 20 items from page 1."""
+    page_1 = [
+        {"meterId": f"J1000{i:02d}", "serialNo": f"SE{i:05d}", "make": "Secure", "phaseType": "single", "installStatus": "Installed", "dtCode": "DT-001"}
+        for i in range(20)
+    ]
+    mock_portal.get("/portal/meters/search").mock(
+        return_value=httpx.Response(200, json={"data": page_1, "total": 100})
+    )
+
+    response = await app_client.get("/api/v1/meters?limit=20&offset=0")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["data"]) == 20
+    assert data["data"][0]["id"] == "J100000"
+    assert data["pagination"]["offset"] == 0
+    assert data["pagination"]["limit"] == 20
+    assert data["pagination"]["total"] == 100
+    assert data["pagination"]["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_pagination_bounds_validation(app_client: httpx.AsyncClient):
+    """Verify negative offsets or out-of-range limits return 422 or 400 Bad Request."""
+    # Negative offset
+    resp_neg_offset = await app_client.get("/api/v1/meters?offset=-5")
+    assert resp_neg_offset.status_code in (400, 422)
+
+    # Limit 0
+    resp_zero_limit = await app_client.get("/api/v1/meters?limit=0")
+    assert resp_zero_limit.status_code in (400, 422)
+
+    # Limit 101 (> 100)
+    resp_over_limit = await app_client.get("/api/v1/meters?limit=101")
+    assert resp_over_limit.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_get_meter_missing_geo_coordinates(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
+    """Verify meter detail succeeds with location=None when geo endpoint returns 404."""
+    mock_portal.get("/portal/meters/J100000/geo").mock(
+        return_value=httpx.Response(404, json={"error": "not found"})
+    )
+
+    response = await app_client.get("/api/v1/meters/J100000")
+    assert response.status_code == 200
+    meter = response.json()
+    assert meter["id"] == "J100000"
+    assert meter["location"] is None
+

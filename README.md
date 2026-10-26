@@ -2,7 +2,7 @@
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-23%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-46%20passed-brightgreen.svg)]()
 [![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539.svg?logo=openapi-initiative)]()
 
 A production-quality asynchronous REST API wrapper providing programmatic, normalized access to smart meter telemetry, nameplate metadata, and distribution topology from the legacy SvelteKit-based **Urja Meter Ops** portal.
@@ -152,7 +152,7 @@ API_PREFIX="/api/v1"
 # Legacy Portal Configuration
 URJA_BASE_URL="https://urja-ops.flockenergy.tech"
 URJA_USERNAME="operator@urja.local"
-URJA_PASSWORD="urja-ops-2026"
+URJA_PASSWORD="your-portal-password-here"
 
 # Upstream Timeout & Retry Controls
 UPSTREAM_TIMEOUT_SECONDS=15.0
@@ -160,6 +160,10 @@ UPSTREAM_MAX_RETRIES=1
 
 # Local Fixture Mode (set to true to test completely offline)
 MOCK_MODE=false
+
+# API Security Controls
+API_KEY=
+ALLOWED_ORIGINS=["*"]
 ```
 
 > **Security Note**: Real portal passwords and tokens are never committed to Git. `.env` is ignored by `.gitignore`.
@@ -356,44 +360,54 @@ pytest -v
 
 Output:
 ```text
-tests/test_auth.py::test_successful_login PASSED
-tests/test_auth.py::test_invalid_credentials PASSED
-tests/test_expired_session_reauthenticates_automatically PASSED
-tests/test_auth.py::test_concurrent_requests_on_expired_session_single_login PASSED
-tests/test_auth.py::test_prevent_infinite_retry_loop_on_persistent_auth_failure PASSED
-tests/test_auth.py::test_auth_login_api_endpoint PASSED
-tests/test_auth.py::test_auth_login_custom_credentials_forbidden_in_production PASSED
-tests/test_auth.py::test_api_key_enforcement PASSED
-tests/test_consumption.py::test_get_consumption PASSED
-tests/test_consumption.py::test_consumption_date_filtering PASSED
-tests/test_consumption.py::test_consumption_invalid_date_order PASSED
-tests/test_consumption.py::test_consumption_normalization_robustness PASSED
-tests/test_health.py::test_health_endpoint PASSED
-tests/test_health.py::test_openapi_schema PASSED
-tests/test_health.py::test_swagger_ui_available PASSED
-tests/test_hierarchy.py::test_get_hierarchy PASSED
-tests/test_hierarchy.py::test_build_hierarchy_tree_edge_cases PASSED
-tests/test_hierarchy.py::test_build_hierarchy_deduplicates_and_handles_empty PASSED
-tests/test_meters.py::test_list_meters PASSED
-tests/test_meters.py::test_pagination_exact_slice_limit_2_offset_1 PASSED
-tests/test_meters.py::test_pagination_across_page_boundary PASSED
-tests/test_meters.py::test_pagination_empty_results PASSED
-tests/test_meters.py::test_pagination_offset_past_total PASSED
-tests/test_meters.py::test_pagination_final_page PASSED
-tests/test_meters.py::test_get_meter_legacy_build PASSED
-tests/test_meters.py::test_get_meter_v2_classdata_build PASSED
-tests/test_meters.py::test_get_meter_not_found PASSED
-tests/test_meters.py::test_get_meter_invalid_id_format PASSED
-tests/test_meters.py::test_get_meter_does_not_swallow_upstream_error PASSED
-tests/test_meters.py::test_html_parsing_fallback PASSED
-tests/test_reliability.py::test_upstream_timeout PASSED
-tests/test_reliability.py::test_upstream_rate_limiting PASSED
-tests/test_reliability.py::test_upstream_500_error PASSED
-tests/test_reliability.py::test_read_only_enforcement PASSED
-tests/test_reliability.py::test_secret_redaction_in_error_responses PASSED
-tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED
+tests/test_auth.py::test_successful_login PASSED                         [  2%]
+tests/test_auth.py::test_invalid_credentials PASSED                      [  4%]
+tests/test_auth.py::test_login_missing_session_cookie PASSED             [  6%]
+tests/test_auth.py::test_failed_reauthentication PASSED                  [  8%]
+tests/test_auth.py::test_expired_session_reauthenticates_automatically PASSED [ 10%]
+tests/test_auth.py::test_concurrent_requests_on_expired_session_single_login PASSED [ 13%]
+tests/test_auth.py::test_prevent_infinite_retry_loop_on_persistent_auth_failure PASSED [ 15%]
+tests/test_auth.py::test_auth_login_api_endpoint PASSED                  [ 17%]
+tests/test_auth.py::test_auth_login_custom_credentials_forbidden_in_production PASSED [ 19%]
+tests/test_auth.py::test_api_key_enforcement PASSED                      [ 21%]
+tests/test_consumption.py::test_get_consumption PASSED                   [ 23%]
+tests/test_consumption.py::test_consumption_date_filtering PASSED        [ 26%]
+tests/test_consumption.py::test_consumption_invalid_date_order PASSED    [ 28%]
+tests/test_consumption.py::test_consumption_normalization_robustness PASSED [ 30%]
+tests/test_consumption.py::test_consumption_invalid_meter_id PASSED      [ 32%]
+tests/test_consumption.py::test_consumption_invalid_calendar_date PASSED [ 34%]
+tests/test_consumption.py::test_consumption_empty_readings PASSED        [ 36%]
+tests/test_health.py::test_health_endpoint PASSED                        [ 39%]
+tests/test_health.py::test_openapi_schema PASSED                         [ 41%]
+tests/test_health.py::test_swagger_ui_available PASSED                   [ 43%]
+tests/test_hierarchy.py::test_get_hierarchy PASSED                       [ 45%]
+tests/test_hierarchy.py::test_build_hierarchy_tree_edge_cases PASSED     [ 47%]
+tests/test_hierarchy.py::test_build_hierarchy_deduplicates_and_handles_empty PASSED [ 50%]
+tests/test_hierarchy.py::test_hierarchy_multi_page_data PASSED           [ 52%]
+tests/test_hierarchy.py::test_hierarchy_upstream_failure_during_pagination PASSED [ 54%]
+tests/test_meters.py::test_list_meters PASSED                            [ 56%]
+tests/test_meters.py::test_pagination_exact_slice_limit_2_offset_1 PASSED [ 58%]
+tests/test_meters.py::test_pagination_across_page_boundary PASSED        [ 60%]
+tests/test_meters.py::test_pagination_empty_results PASSED               [ 63%]
+tests/test_meters.py::test_pagination_offset_past_total PASSED           [ 65%]
+tests/test_meters.py::test_pagination_final_page PASSED                  [ 67%]
+tests/test_meters.py::test_get_meter_legacy_build PASSED                 [ 69%]
+tests/test_meters.py::test_get_meter_v2_classdata_build PASSED           [ 71%]
+tests/test_meters.py::test_get_meter_not_found PASSED                    [ 73%]
+tests/test_meters.py::test_get_meter_invalid_id_format PASSED            [ 76%]
+tests/test_meters.py::test_get_meter_does_not_swallow_upstream_error PASSED [ 78%]
+tests/test_meters.py::test_html_parsing_fallback PASSED                  [ 80%]
+tests/test_meters.py::test_pagination_exact_slice_limit_20_offset_0 PASSED [ 82%]
+tests/test_meters.py::test_pagination_bounds_validation PASSED           [ 84%]
+tests/test_meters.py::test_get_meter_missing_geo_coordinates PASSED      [ 86%]
+tests/test_reliability.py::test_upstream_timeout PASSED                  [ 89%]
+tests/test_reliability.py::test_upstream_rate_limiting PASSED            [ 91%]
+tests/test_reliability.py::test_upstream_500_error PASSED                [ 93%]
+tests/test_reliability.py::test_read_only_enforcement PASSED             [ 95%]
+tests/test_reliability.py::test_secret_redaction_in_error_responses PASSED [ 97%]
+tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED [100%]
 
-============================= 36 passed in 9.26s ==============================
+============================= 46 passed in 7.82s ==============================
 ```
 
 ---
@@ -411,6 +425,7 @@ tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED
 
 - **Exact Slice Pagination**: The upstream portal only serves fixed 20-item pages (`page=1, 2, ...`). The wrapper dynamically fetches across page boundaries, accumulates items into a buffer, slices exactly `[offset : offset + limit]`, and returns accurate pagination metadata (`total`, `limit`, `offset`, `has_more`). Bounded fetching prevents runaway loops.
 - **API Key Protection**: Configurable API key protection via `X-API-Key` header (`API_KEY` in environment). When unconfigured, it permits convenient zero-config local development; when set in staging or production, all `/api/v1` routes require valid authorization.
+- **Request Tracing**: All responses include the `X-Request-ID` header generated or propagated by middleware, matching the `request_id` embedded in standard error envelopes.
 - **CORS Hardening**: Strict validation ensures `allow_credentials=True` is never combined with wildcard origins (`["*"]`). Specific origins must be declared when cookie/credential forwarding is enabled.
 - **Login Endpoint Safeguards**: The public `/api/v1/auth/login` endpoint rejects caller-supplied credentials in production (`APP_ENV != development`) to prevent credential stuffing or unauthorized proxy authentication.
 - **Read-Only Enforcement**: Outbound portal interactions are restricted to read-only `GET` requests; any attempt to trigger state-altering methods throws `PortalUpstreamError`.
@@ -435,6 +450,25 @@ tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED
     }
   }
   ```
+
+---
+
+## Docker Deployment
+
+A lightweight, unprivileged multi-stage `Dockerfile` is provided for containerized deployments:
+
+```bash
+# Build Docker image
+docker build -t urja-meter-ops .
+
+# Run container in local mock or production mode
+docker run -d --name urja-api -p 8000:8000 --env-file .env urja-meter-ops
+```
+
+The container automatically enforces:
+- Non-root user execution (`appuser:appgroup`, UID 10001).
+- Native container healthcheck pinging `http://localhost:8000/health`.
+- Bytecode generation suppression for lean immutable container images.
 
 ---
 
@@ -472,3 +506,4 @@ tests/test_reliability.py::test_cors_wildcard_credentials_prohibited PASSED
 - [REFLECTION.md](file:///REFLECTION.md): Reflection answers to the five assignment questions.
 - [architecture.md](file:///docs/architecture.md): Architectural design document.
 - [openapi.json](file:///openapi.json): Committed OpenAPI 3.1 specification.
+

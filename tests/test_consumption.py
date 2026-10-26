@@ -72,3 +72,33 @@ def test_consumption_normalization_robustness():
     assert r1.kvah is None
     assert r1.voltage_r is None
     assert r2.kwh == 48439.58
+
+
+@pytest.mark.asyncio
+async def test_consumption_invalid_meter_id(app_client: httpx.AsyncClient):
+    """Verify consumption rejects invalid meter identifier with 400 Bad Request."""
+    response = await app_client.get("/api/v1/meters/bad;drop/consumption")
+    assert response.status_code == 400
+    assert "Invalid meter ID format" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_consumption_invalid_calendar_date(app_client: httpx.AsyncClient):
+    """Verify invalid calendar dates like 2026-02-31 are rejected with 400 Bad Request."""
+    response = await app_client.get("/api/v1/meters/J100000/consumption?from=2026-02-31")
+    assert response.status_code == 400
+    assert "valid calendar date" in response.json()["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_consumption_empty_readings(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
+    """Verify empty readings array returns 200 with reading_count=0."""
+    mock_portal.get("/portal/meters/J100000/energy").mock(
+        return_value=httpx.Response(200, json={"data": []})
+    )
+    response = await app_client.get("/api/v1/meters/J100000/consumption")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["reading_count"] == 0
+    assert data["readings"] == []
+

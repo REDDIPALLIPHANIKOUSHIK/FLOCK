@@ -73,12 +73,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Assign or propagate unique request ID across application lifecycle."""
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 @app.exception_handler(PortalError)
 async def portal_error_handler(request: Request, exc: PortalError) -> JSONResponse:
     """Format domain-specific portal adapter exceptions into consistent error response."""
-    request_id = str(uuid.uuid4())[:8]
+    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())[:8]
     logger.error("[%s] Portal error occurred (%s): %s", request_id, exc.code, exc.message)
-    headers = {}
+    headers = {"X-Request-ID": request_id}
     if hasattr(exc, "retry_after") and exc.retry_after is not None:
         headers["Retry-After"] = str(exc.retry_after)
 
@@ -98,10 +108,14 @@ async def portal_error_handler(request: Request, exc: PortalError) -> JSONRespon
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """Normalize FastAPI HTTP exceptions into consistent error envelope."""
-    request_id = str(uuid.uuid4())[:8]
+    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())[:8]
     code = "HTTP_ERROR"
     if exc.status_code == 400:
         code = "BAD_REQUEST"
+    elif exc.status_code == 401:
+        code = "UNAUTHORIZED"
+    elif exc.status_code == 403:
+        code = "FORBIDDEN"
     elif exc.status_code == 404:
         code = "NOT_FOUND"
     elif exc.status_code == 422:
@@ -109,6 +123,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
     return JSONResponse(
         status_code=exc.status_code,
+        headers={"X-Request-ID": request_id},
         content={
             "error": {
                 "code": code,
@@ -122,10 +137,11 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all error handler preventing internal stack traces or secrets from leaking."""
-    request_id = str(uuid.uuid4())[:8]
+    request_id = getattr(request.state, "request_id", None) or str(uuid.uuid4())[:8]
     logger.exception("[%s] Unhandled server error: %s", request_id, exc)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        headers={"X-Request-ID": request_id},
         content={
             "error": {
                 "code": "INTERNAL_SERVER_ERROR",

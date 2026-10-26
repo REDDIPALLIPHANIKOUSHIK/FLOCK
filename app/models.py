@@ -111,7 +111,7 @@ class HealthResponse(BaseModel):
 
 class LoginRequest(BaseModel):
     email: Optional[str] = Field(None, description="Optional portal email override", example="operator@urja.local")
-    password: Optional[str] = Field(None, description="Optional portal password override", example="urja-ops-2026")
+    password: Optional[str] = Field(None, description="Optional portal password override", example="your-password")
 
 
 class AuthResponse(BaseModel):

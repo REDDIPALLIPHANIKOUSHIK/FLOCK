@@ -59,3 +59,57 @@ def test_build_hierarchy_deduplicates_and_handles_empty():
     feeder_node = tree.nodes[0]
     assert len(feeder_node.children) == 2
     assert [c.id for c in feeder_node.children] == ["DT-001", "DT-002"]
+
+
+@pytest.mark.asyncio
+async def test_hierarchy_multi_page_data(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
+    """Verify hierarchy endpoint fetches across multiple upstream pages."""
+    page_1 = [
+        {"code": f"DT-{i:03d}", "name": f"DT {i}", "feederCode": "F-01", "capacityKva": 100}
+        for i in range(1, 21)
+    ]
+    page_2 = [
+        {"code": f"DT-{i:03d}", "name": f"DT {i}", "feederCode": "F-02", "capacityKva": 200}
+        for i in range(21, 31)
+    ]
+
+    def dts_side_effect(request: httpx.Request):
+        url = str(request.url)
+        if "page=2" in url:
+            return httpx.Response(200, json={"data": page_2, "total": 30})
+        return httpx.Response(200, json={"data": page_1, "total": 30})
+
+    mock_portal.get("/portal/dts").mock(side_effect=dts_side_effect)
+
+    response = await app_client.get("/api/v1/hierarchy")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_distribution_transformers"] == 30
+    assert len(data["nodes"]) == 2  # Feeders F-01 and F-02
+    feeder_1 = next(n for n in data["nodes"] if n["id"] == "F-01")
+    assert len(feeder_1["children"]) == 20
+    feeder_2 = next(n for n in data["nodes"] if n["id"] == "F-02")
+    assert len(feeder_2["children"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_hierarchy_upstream_failure_during_pagination(app_client: httpx.AsyncClient, mock_portal: respx.MockRouter):
+    """Verify upstream failure on page 2 returns 502 rather than an incomplete partial tree."""
+    page_1 = [
+        {"code": f"DT-{i:03d}", "name": f"DT {i}", "feederCode": "F-01"}
+        for i in range(1, 21)
+    ]
+
+    def dts_side_effect(request: httpx.Request):
+        url = str(request.url)
+        if "page=2" in url:
+            return httpx.Response(500, text="Internal Server Error on page 2")
+        return httpx.Response(200, json={"data": page_1, "total": 40})
+
+    mock_portal.get("/portal/dts").mock(side_effect=dts_side_effect)
+
+    response = await app_client.get("/api/v1/hierarchy")
+    assert response.status_code == 502
+    data = response.json()
+    assert data["error"]["code"] == "UPSTREAM_ERROR"
+

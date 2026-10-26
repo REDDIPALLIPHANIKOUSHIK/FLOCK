@@ -1,5 +1,6 @@
 """Meter collection, meter details, and consumption history endpoints."""
 
+from datetime import datetime
 import logging
 import re
 from typing import Optional
@@ -61,10 +62,15 @@ async def list_meters(
     limit_val = limit if isinstance(limit, int) else 20
     query_str = q if isinstance(q, str) else ""
 
-    if limit_val <= 0:
-        return MeterListResponse(
-            data=[],
-            pagination=PaginationMeta(limit=limit_val, offset=offset_val, total=0, has_more=False)
+    if offset_val < 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parameter 'offset' must be a non-negative integer."
+        )
+    if limit_val < 1 or limit_val > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Parameter 'limit' must be between 1 and 100."
         )
 
     page_size = 20
@@ -90,24 +96,30 @@ async def list_meters(
     all_raw = list(first_items)
     buffer_start_offset = (first_page - 1) * page_size
     needed_in_buffer = (offset_val - buffer_start_offset) + limit_val
+    reached_end = len(first_items) < page_size
 
-    # If the first page returned fewer than page_size, no subsequent pages exist
-    if len(first_items) >= page_size:
+    # Calculate exact pages needed to satisfy the requested slice
+    needed_pages = ((offset_val + limit_val - 1) // page_size) - (offset_val // page_size) + 1
+    max_pages_to_fetch = min(max(needed_pages, 6), 10)  # Bound while guaranteeing coverage
+
+    if not reached_end and len(all_raw) < needed_in_buffer:
         current_page = first_page + 1
-        max_pages_to_fetch = 10  # Protection against infinite loops
         pages_fetched = 1
 
         while len(all_raw) < needed_in_buffer and pages_fetched < max_pages_to_fetch:
             if total is not None and (buffer_start_offset + len(all_raw)) >= total:
+                reached_end = True
                 break
             next_raw = await client.search_meters(query=query_str, page=current_page)
             next_items = next_raw.get("data", [])
             if not next_items:
+                reached_end = True
                 break
             all_raw.extend(next_items)
             current_page += 1
             pages_fetched += 1
             if len(next_items) < page_size:
+                reached_end = True
                 break
 
     # Extract exact requested slice from buffer
@@ -122,7 +134,7 @@ async def list_meters(
     if total is not None:
         has_more = (offset_val + len(normalized)) < total
     else:
-        has_more = len(normalized) == limit_val
+        has_more = len(normalized) == limit_val and not reached_end
 
     return MeterListResponse(
         data=normalized,
@@ -214,6 +226,24 @@ async def get_meter_consumption(
 ) -> ConsumptionResponse:
     """Retrieve interval consumption history for the specified meter."""
     clean_id = validate_meter_id(meter_id)
+
+    if from_date:
+        try:
+            datetime.strptime(from_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Parameter 'from' date must be a valid calendar date in YYYY-MM-DD format."
+            )
+
+    if to_date:
+        try:
+            datetime.strptime(to_date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Parameter 'to' date must be a valid calendar date in YYYY-MM-DD format."
+            )
 
     if from_date and to_date and from_date > to_date:
         raise HTTPException(

@@ -639,7 +639,7 @@
             ],
             "title": "Password",
             "description": "Optional portal password override",
-            "example": "urja-ops-2026"
+            "example": "your-password"
           }
         },
         "type": "object",

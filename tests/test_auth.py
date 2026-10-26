@@ -45,6 +45,35 @@ async def test_invalid_credentials(portal_client: UrjaPortalClient, mock_portal:
 
 
 @pytest.mark.asyncio
+async def test_login_missing_session_cookie(portal_client: UrjaPortalClient, mock_portal: respx.MockRouter):
+    """Verify login raises PortalAuthenticationError when portal returns 200 without session cookie."""
+    mock_portal.post("/login").mock(
+        return_value=httpx.Response(200, json={"type": "success"})
+    )
+
+    with pytest.raises(PortalAuthenticationError) as exc_info:
+        await portal_client.authenticate("operator@urja.local", "urja-ops-2026")
+    assert "did not issue a valid session cookie" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_failed_reauthentication(portal_client: UrjaPortalClient, mock_portal: respx.MockRouter):
+    """Verify failed reauthentication raises PortalAuthenticationError immediately."""
+    mock_portal.get("/portal/meters/search").mock(
+        return_value=httpx.Response(401, json={"error": "unauthorized"})
+    )
+    mock_portal.post("/login").mock(
+        return_value=httpx.Response(200, text=LOGIN_FAILURE_BODY)
+    )
+
+    portal_client._is_authenticated = True
+
+    with pytest.raises(PortalAuthenticationError) as exc_info:
+        await portal_client.search_meters()
+    assert "Invalid upstream credentials" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
 async def test_expired_session_reauthenticates_automatically(portal_client: UrjaPortalClient, mock_portal: respx.MockRouter):
     """Verify client detects expired session (401), re-authenticates, and retries request."""
     search_call_count = 0

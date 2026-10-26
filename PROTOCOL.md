@@ -34,7 +34,7 @@
   - `Origin: https://urja-ops.flockenergy.tech` (Critical: Without this header, SvelteKit's built-in CSRF protection rejects the request with `HTTP 403 Forbidden: Cross-site POST form submissions are forbidden`).
 - **Form Fields**:
   - `email`: `operator@urja.local` (Note: the input field is named `email`, not `username`).
-  - `password`: `urja-ops-2026`
+  - `password`: `<PORTAL_PASSWORD>`
 
 ### Success Response
 - **Status**: `HTTP 200 OK` (or `303 See Other`)
